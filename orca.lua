@@ -42,6 +42,7 @@ local fileselect = require "fileselect"
 local music = require "musicutil"
 local tab = require "tabutil"
 local textentry = require "textentry"
+local keyboard = require 'core/keyboard'
 
 local ccrow = include("lib/crow")
 local engines = include("lib/engines")
@@ -55,7 +56,6 @@ local VAL_LIST = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c
 
 local update_id
 local running = true
-local keyboard = hid.connect()
 local g = grid.connect()
 local arc = arc.connect()
 local val_index, ops_index, notes_index = 1, 1, 1
@@ -97,6 +97,15 @@ local orca = {
     pos = {0, 0, 0, 0, 0, 0},
   },
 }
+
+-- NB: tabutil.key cannot be used as it returns the numerical index
+local function find_in_table(search_v, t)
+  for k, v in pairs(t) do
+    if v == search_v then
+      return k
+    end
+  end
+end
 
 function orca.normalize(n)
   return n == "e" and "F" or n == "b" and "C" or n
@@ -706,7 +715,33 @@ local kb = {
   s = {[42] = true, [54] = true},
   c = {[29] = true, [125] = true, [127] = true, [97] = true}
 }
-function keyboard.event(typ, code, val)
+
+
+local is_normal_k_pressed = false
+keyboard.char = function(a)
+  local keyinput = a
+  if is_normal_k_pressed then
+    if not ctrl then
+      if orca.cell[y_index][x_index] == "/" then
+        orca.sc_ops.count = util.clamp(orca.sc_ops.count - 1, 1, 6)
+      end
+      cell_input = keyinput
+      orca.cell[y_index][x_index] = keyinput
+    elseif ctrl then
+      if a == 'x' then
+        orca:copy_area(x_index, y_index, true)
+      elseif a == 'c' then
+        orca:copy_area(x_index, y_index)
+      elseif a == 'v' then
+        orca:paste_area(x_index, y_index)
+      end
+    end
+  end
+end
+
+keyboard.code = function(c, val)
+  local code = find_in_table(c, keyboard.codes)
+
   local menu = norns.menu.status()
 
   if kb.s[code] then
@@ -790,25 +825,11 @@ function keyboard.event(typ, code, val)
     else
       params:set("clock_tempo", params:get("clock_tempo") + 10)
     end
-  else if val == 1 then
-    local keyinput = get_key(code, val, shift)
-    if not ctrl then
-        if orca.cell[y_index][x_index] == "/" then
-          orca.sc_ops.count = util.clamp(orca.sc_ops.count - 1, 1, 6)
-        end
-      cell_input = keyinput
-      orca.cell[y_index][x_index] = keyinput
-      elseif ctrl then
-        if code == 45 then
-          orca:copy_area(x_index, y_index, true)
-        elseif code == 46 then
-          orca:copy_area(x_index, y_index)
-        elseif code == 47 then
-          orca:paste_area(x_index, y_index)
-        end
-      end
-   end
- end
+  else
+    -- NB: keyboard.char gets triggered AFTER keyboard.code
+    -- hence we use a basic semaphore variable to allow it to process normal keys
+    is_normal_k_pressed = (val == 1)
+  end
 end
 
 local function draw_op_frame(x, y, b)
@@ -1029,4 +1050,3 @@ end
 function cleanup()
   orca.state:write(norns.state.data .. "orca-state.pset")
 end
-
